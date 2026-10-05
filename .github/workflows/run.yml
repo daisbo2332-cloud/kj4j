@@ -1,0 +1,48 @@
+name: Linux NoVNC
+on:
+  workflow_dispatch:
+concurrency:
+  group: vps
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 385
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup
+      run: |
+        sudo apt update
+        sudo apt install -y xfce4 xfce4-goodies tigervnc-standalone-server python3-websockify curl
+        git clone --depth 1 https://github.com/novnc/noVNC.git
+    - name: Start VNC
+      run: |
+        mkdir -p ~/.vnc
+        echo "Vps@xFBgCbmK6" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        vncserver :1 -geometry 1920x1080 -depth 24
+        ./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+        sleep 5
+    - name: Tunnel
+      run: |
+        curl -L -o cf.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+        sudo dpkg -i cf.deb || true
+        cloudflared tunnel --url http://localhost:6080 --no-autoupdate > tunnel.log 2>&1 &
+        sleep 30
+    - name: Export
+      run: |
+        for i in $(seq 1 30); do
+          URL=$(grep -oE 'https://[a-zA-Z0-9-]+.trycloudflare.com' tunnel.log | head -1)
+          if [ -n "$URL" ]; then
+            echo "$URL/vnc.html|Vps@xFBgCbmK6" > info.txt
+            break
+          fi
+          sleep 2
+        done
+        [ -f info.txt ] || echo "ERROR|Tunnel not found" > info.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: result
+        path: info.txt
+    - name: Keep
+      run: sleep 360m
